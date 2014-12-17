@@ -308,10 +308,12 @@ def main():
     if read_hex_file(chunks, received.strip()):
         print
         print "Resetting RoDI"
-        sock.send("bootloader")
         print
-        if wait_for(sock, "\x00", 1500)[0]:
-            program_process(chunks, sock)
+        sock.send("bootloader")
+        #if wait_for(sock, "\x00", 1500)[0]: #turns out this is not necessary
+        program_process(chunks, sock)
+        #else:
+        #    print "Couldn't communicate with the bootloader"
 
     sock.close()
 
