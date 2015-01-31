@@ -310,10 +310,10 @@ def main():
         print "Resetting RoDI"
         print
         sock.send("bootloader")
-        #if wait_for(sock, "\x00", 1500)[0]: #turns out this is not necessary
-        program_process(chunks, sock)
-        #else:
-        #    print "Couldn't communicate with the bootloader"
+        if wait_for(sock, "\x00", 5000)[0]:
+            program_process(chunks, sock)
+        else:
+            print "Couldn't communicate with the bootloader"
 
     sock.close()
 
