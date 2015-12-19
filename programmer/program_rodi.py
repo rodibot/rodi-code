@@ -20,13 +20,13 @@ import binascii
 import struct
 import select
 import socket
-import errno
 
 MAX_TIMEOUT = 500
 SUCCESS = "success"
 FAILED = "failed"
 
-class Data:
+
+class Data(object):
     '''
     Class containing the data from non-contiguous memory allocations
     '''
@@ -35,35 +35,47 @@ class Data:
         self.data = data
         self.count = len(data)
 
+    def get_data(self):
+        '''
+        Method gor getting the data
+        '''
+        return self.data
+
+    def get_count(self):
+        '''
+        Method gor getting the count
+        '''
+        return self.count
+
 
 def parse_line(line):
     '''
     Parameters:
         line: The line to parse
     Returns:
-        The size of data. The address of data. The type of data. The line checksum.
+        The size, address, type of data. The line checksum.
         True if the checksum is correct, otherwise False.
     Description:
         It parses a line from the .hex file.
     '''
-    ok = False
+    status_ok = False
     size = int(line[1:3], 16)
     address = int(line[3:7], 16)
-    type = int(line[7:9], 16)
+    data_type = int(line[7:9], 16)
     next_index = (9 + size * 2)
     data = binascii.a2b_hex(line[9:next_index])
     checksum = int(line[next_index:], 16)
 
     # checking if checksum is correct
-    sum = size + (address >> 8) + (address & 0xFF) + type
+    test_checksum = size + (address >> 8) + (address & 0xFF) + data_type
     for byte in data:
-        sum += ord(byte)
+        test_checksum += ord(byte)
 
-    if (~(sum & 0xFF) + 1) & 0xFF == checksum:
-        ok = True
+    if (~(test_checksum & 0xFF) + 1) & 0xFF == checksum:
+        status_ok = True
 
-    return (size, address, type, data, checksum, ok)
-#------------------------------------------------------------------------------
+    return (size, address, data_type, data, checksum, status_ok)
+# -----------------------------------------------------------------------------
 
 
 def read_hex_file(chunks, path):
@@ -77,20 +89,20 @@ def read_hex_file(chunks, path):
         It reads a .hex file and stores the data in memory.
     '''
     try:
-        file = open(path, 'r')
+        hex_file = open(path, 'r')
     except IOError:
         print "Hex file not loaded"
         return False
-    line = file.readline()
+    line = hex_file.readline()
     if line[0] != ':':
         print "The file seems to be a not valid .hex file"
-        file.close()
+        hex_file.close()
         return False
 
-    size, address, type, data, checksum, ok = parse_line(line.strip())
-    if not ok:
+    size, address, _, data, _, status_ok = parse_line(line.strip())
+    if not status_ok:
         print "The checksum in line 1 is wrong"
-        file.close()
+        hex_file.close()
         return False
 
     chunks.append(Data(address, data))
@@ -98,11 +110,11 @@ def read_hex_file(chunks, path):
     # Read the other lines
     index = 0
     count = 2
-    for line in file:
-        size, address, type, data, checksum, ok = parse_line(line.strip())
-        if not ok:
+    for line in hex_file:
+        size, address, _, data, _, status_ok = parse_line(line.strip())
+        if not status_ok:
             print "The checksum in line", count, "is wrong"
-            file.close()
+            hex_file.close()
             return False
 
         if chunks[index].begin + chunks[index].count == address:
@@ -115,7 +127,6 @@ def read_hex_file(chunks, path):
         count += 1
 
     return True
-
 
 
 def init_client(address, port):
@@ -150,7 +161,7 @@ def wait_for(cli, response, timeout):
     received = ""
     milliseconds = 0
     while milliseconds < timeout:
-        rlist, wlist, xlist = select.select(inputs, [], [], 0.001)
+        rlist, _, _ = select.select(inputs, [], [], 0.001)
         if len(rlist) > 0:
             received += cli.recv(1)
             if response in received:
@@ -177,7 +188,7 @@ def return_data(cli, timeout, length=1):
     received = ""
     milliseconds = 0
     while milliseconds < timeout:
-        rlist, wlist, xlist = select.select(inputs, [], [], 0.001)
+        rlist, _, _ = select.select(inputs, [], [], 0.001)
         if len(rlist) > 0:
             received = cli.recv(length)
             return True, received
@@ -216,7 +227,6 @@ def program_process(chunks, cli):
     '''
     print "Connection to Arduino bootloader:",
 
-    counter = 0
     cli.send("\x30\x20")  # STK_GET_SYNCH, SYNC_CRC_EOP
     if not acknowledge(cli):
         return
@@ -229,7 +239,7 @@ def program_process(chunks, cli):
     print "Read device signature:",
     cli.send("\x75\x20")  # STK_READ_SIGN, SYNC_CRC_EOP
     if wait_for(cli, "\x14", MAX_TIMEOUT)[0]:  # STK_INSYNC
-        ok, received = return_data(cli, MAX_TIMEOUT, 3)
+        _, received = return_data(cli, MAX_TIMEOUT, 3)
         print binascii.b2a_hex(received)
         if not wait_for(cli, "\x10", MAX_TIMEOUT)[0]:  # STK_INSYNC
             print FAILED
@@ -245,7 +255,7 @@ def program_process(chunks, cli):
             pages = total / 0x80
             index = 0
 
-            for page in range(pages):
+            for _ in range(pages):
                 print "Load memory address", current_page, ":",
                 # STK_LOAD_ADDRESS, address, SYNC_CRC_EOP
                 cli.send(struct.pack("<BHB", 0x55, current_page, 0x20))
@@ -254,7 +264,8 @@ def program_process(chunks, cli):
 
                 print "Program memory address:",
                 # STK_PROGRAM_PAGE, page size, flash memory, data, SYNC_CRC_EOP
-                cli.send("\x64\x00\x80\x46" + chunk.data[index:index + 0x80] + "\x20")
+                cli.send("\x64\x00\x80\x46" + chunk.data[index:index + 0x80] +
+                         "\x20")
                 if not acknowledge(cli):
                     return
                 current_page += 0x40
@@ -270,7 +281,8 @@ def program_process(chunks, cli):
 
                 print "Program memory address:",
                 # STK_PROGRAM_PAGE, page size, flash memory, data, SYNC_CRC_EOP
-                cli.send(struct.pack(">BHB", 0x64, total, 0x20) + chunk.data[index:index + total] + "\x20")
+                cli.send(struct.pack(">BHB", 0x64, total, 0x20) +
+                         chunk.data[index:index + total] + "\x20")
                 if not acknowledge(cli):
                     return
 
@@ -280,8 +292,12 @@ def program_process(chunks, cli):
 
 
 def main():
+    '''
+    The maimain entry point
+    '''
     print "RoDI WiFi programmer 2014 (c) Gary Servin"
-    print "Based on http://www.sistemasorp.es/2014/11/11/programando-un-arduino-remotamente-con-el-modulo-esp8266/"
+    print "Based on http://www.sistemasorp.es/2014/11/11/\
+programando-un-arduino-remotamente-con-el-modulo-esp8266/"
     print
 
     address = "192.168.4.1"
@@ -299,8 +315,9 @@ def main():
     print "Connecting to RoDI..."
     try:
         sock = init_client(address, port)
-    except Exception, e:
-        print ('something\'s wrong with %s:%d. Exception type is %s' % (address, port, `e`))
+    except socket.error as msg:
+        print 'something\'s wrong with %s:%d. \
+               Exception type is %s' % (address, port, repr(msg))
         sys.exit(1)
 
     print
